@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Camera App</title>
+<style>
+    #video {
+        width: 100%;
+        max-width: 600px;
+    }
+
+    #canvas {
+        display: none;
+    }
+
+    #cameraControls {
+        display: none;
+    }
+
+    #loginForm {
+        margin-bottom: 20px;
+    }
+
+    .controls {
+        margin-top: 20px;
+    }
+
+    .controls button {
+        margin-right: 10px;
+    }
+
+    #captures {
+        margin-top: 20px;
+    }
+
+    .capture {
+        margin: 10px;
+        display: flex;
+        align-items: center;
+    }
+
+    .capture img,
+    .capture video {
+        margin-right: 10px;
+    }
+</style>
+</head>
+<body>
+<div id="loginForm">
+    <h2>Login</h2>
+    <label for="username">Username:</label>
+    <input type="text" id="username" required>
+    <label for="password">Password:</label>
+    <input type="password" id="password" required>
+    <button id="loginButton">Login</button>
+    <p id="loginMessage" style="color: red;"></p>
+</div>
+
+<div id="cameraControls">
+    <video id="video" autoplay muted></video>
+    <canvas id="canvas" width="640" height="480"></canvas>
+    <div class="controls">
+        <button id="startButton">Start</button>
+        <button id="stopButton" disabled>Stop</button>
+        <button id="captureButton">Capture</button>
+        <button id="switchButton">Switch Camera</button>
+    </div>
+    <audio id="audio" controls style="display:none;"></audio>
+    <video id="recordedVideo" controls style="display:none;"></video>
+</div>
+
+<div id="captures">
+    <h3>Captured Images and Videos</h3>
+</div>
+
+<script>
+    const loginForm = document.getElementById('loginForm');
+    const loginButton = document.getElementById('loginButton');
+    const loginMessage = document.getElementById('loginMessage');
+    const cameraControls = document.getElementById('cameraControls');
+
+    const video = document.getElementById('video');
+    const canvas = document.getElementById('canvas');
+    const startButton = document.getElementById('startButton');
+    const stopButton = document.getElementById('stopButton');
+    const captureButton = document.getElementById('captureButton');
+    const switchButton = document.getElementById('switchButton');
+    const audio = document.getElementById('audio');
+    const recordedVideo = document.getElementById('recordedVideo');
+    const captures = document.getElementById('captures');
+
+    let mediaRecorder;
+    let recordedChunks = [];
+    let currentStream;
+    let currentCamera = 'environment'; // Default to rear camera
+
+    // Login logic
+    loginButton.addEventListener('click', function() {
+        const username = document.getElementById('username').value;
+        const password = document.getElementById('password').value;
+
+        // Simple validation
+        if (username && password) {
+            loginForm.style.display = 'none';
+            cameraControls.style.display = 'block';
+            getUserMedia();
+        } else {
+            loginMessage.textContent = 'Please enter both username and password';
+        }
+    });
+
+    // Get user media (video and audio)
+    async function getUserMedia() {
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: currentCamera },
+                audio: true
+            });
+            video.srcObject = stream;
+            currentStream = stream;
+            mediaRecorder = new MediaRecorder(stream);
+
+            // Handle data available event
+            mediaRecorder.ondataavailable = function(event) {
+                if (event.data.size > 0) {
+                    recordedChunks.push(event.data);
+                }
+            }
+
+            // Handle stop event
+            mediaRecorder.onstop = function() {
+                const recordedBlob = new Blob(recordedChunks, { type: 'video/webm' });
+                recordedChunks = [];
+                recordedVideo.src = URL.createObjectURL(recordedBlob);
+                saveBlob(recordedBlob, 'recorded_video.webm');
+                displayCapture('video', recordedVideo.src);
+            }
+        } catch (error) {
+            console.error('Error accessing media devices: ', error);
+        }
+    }
+
+    // Start recording
+    startButton.addEventListener('click', function() {
+        mediaRecorder.start();
+        startButton.disabled = true;
+        stopButton.disabled = false;
+    });
+
+    // Stop recording
+    stopButton.addEventListener('click', function() {
+        mediaRecorder.stop();
+        startButton.disabled = false;
+        stopButton.disabled = true;
+    });
+
+    // Capture image from video stream
+    captureButton.addEventListener('click', function() {
+        canvas.width = video.videoWidth;
+        canvas.height = video.videoHeight;
+        const context = canvas.getContext('2d');
+        // If it's the rear camera, no transformation is needed
+        if (currentCamera === 'environment') {
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        } else { // If it's the front camera, flip horizontally
+            context.translate(canvas.width, 0);
+            context.scale(-1, 1);
+            context.drawImage(video, 0, 0, canvas.width, canvas.height);
+        }
+        // Show the captured image
+        canvas.style.display = 'block';
+        // Save the captured image automatically
+        const dataUrl = canvas.toDataURL('image/png');
+        const imageBlob = dataURLToBlob(dataUrl);
+        saveBlob(imageBlob, 'captured_image.png');
+        displayCapture('image', dataUrl);
+    });
+
+    // Save Blob as a file
+    async function saveBlob(blob, fileName) {
+        const formData = new FormData();
+        formData.append('file', blob, fileName);
+        try {
+            await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+        } catch (error) {
+            console.error('Error uploading file:', error);
+        }
+    }
+
+    // Convert Data URL to Blob
+    function dataURLToBlob(dataUrl) {
+        const byteString = atob(dataUrl.split(',')[1]);
+        const mimeString = dataUrl.split(',')[0].split(':')[1].split(';')[0];
+        const ab = new ArrayBuffer(byteString.length);
+        const ia = new Uint8Array(ab);
+        for (let i = 0; i < byteString.length; i++) {
+            ia[i] = byteString.charCodeAt(i);
+        }
+        return new Blob([ab], { type: mimeString });
+    }
+
+    // Switch between front and rear cameras
+    switchButton.addEventListener('click', function() {
+        currentCamera = currentCamera === 'user' ? 'environment' : 'user';
+        if (currentStream) {
+            currentStream.getTracks().forEach(track => track.stop()); // Stop all tracks
+        }
+        getUserMedia(); // Get media from the new camera
+    });
+
+    // Display captured media
+    function displayCapture(type, src) {
+        const captureContainer = document.createElement('div');
+        captureContainer.classList.add('capture');
+
+        if (type === 'image') {
+            const img = document.createElement('img');
+            img.src = src;
+            img.width = 200;
+            captureContainer.appendChild(img);
+
+            const saveButton = document.createElement('button');
+            saveButton.textContent = 'Save Image';
+            saveButton.addEventListener('click', function() {
+                const link = document.createElement('a');
+                link.href = src;
+                link.download = 'captured_image.png';
+                link.click();
+            });
+            captureContainer.appendChild(saveButton);
+        } else if (type === 'video') {
+            const video = document.createElement('video');
+            video.src = src;
+            video.width = 200;
+            video.controls = true;
+            captureContainer.appendChild(video);
+
+            const saveButton = document.createElement('button');
+            saveButton.textContent = 'Save Video';
+            saveButton.addEventListener('click', function() {
+                const link = document.createElement('a');
+                link.href = src;
+                link.download = 'recorded_video.webm';
+                link.click();
+            });
+            captureContainer.appendChild(saveButton);
+        }
+        captures.appendChild(captureContainer);
+    }
+</script>
+</body>
+</html>
+
